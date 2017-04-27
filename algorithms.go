@@ -1,4 +1,8 @@
-package apksign
+package android
+
+import (
+	"crypto"
+)
 
 type KeyAlgorithm string
 
@@ -9,12 +13,27 @@ const (
 	DSA                 = "DSA"
 )
 
+// this is partially redundant with crypto.Hash, but its purpose is to be able to basically map a string
+// from a config file into a crypto.Hash elsewhere in code
 type HashAlgorithm string
 
 const (
 	SHA256 HashAlgorithm = "SHA256"
 	SHA512               = "SHA512"
 )
+
+func (h HashAlgorithm) AsHash() crypto.Hash {
+	switch h {
+	case SHA256:
+		return crypto.SHA256
+	case SHA512:
+		return crypto.SHA512
+	default:
+		// panic is a smidge aggressive here, but we can't return nil and caller shouldn't have called
+		// us on a string not listed above. in normal operation this is pretty bad.
+		panic("unknown hash algorithm requested")
+	}
+}
 
 type AlgorithmID uint32
 

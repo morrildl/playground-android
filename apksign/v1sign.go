@@ -13,6 +13,7 @@ import (
 
 	"github.com/fullsailor/pkcs7"
 
+	"playground/android"
 	"playground/log"
 )
 
@@ -223,7 +224,7 @@ func (v1 *V1Writer) Add(zf *zip.File) error {
 	return nil
 }
 
-func (v1 *V1Writer) Sign(keys []*SigningKey, signifyV2 bool) error {
+func (v1 *V1Writer) Sign(keys []*android.SigningCert, signifyV2 bool) error {
 	if v1 == nil || v1.manifest == nil || v1.writer == nil {
 		return errors.New("V1Writer.Sign called uninitialized")
 	}

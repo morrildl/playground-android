@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"errors"
 
+	"playground/android"
 	"playground/log"
 )
 
@@ -402,19 +403,19 @@ func (v2 *V2Block) Verify(z *Zip) error {
 	return nil
 }
 
-func (v2 *V2Block) Sign(z *Zip, keys []*SigningKey) ([]byte, error) {
+func (v2 *V2Block) Sign(z *Zip, keys []*android.SigningCert) ([]byte, error) {
 	v2.Signers = make([]*Signer, 0)
 
 	// the ASv2 scheme spec does not actually forbid having multiple 'signer' blocks with the same
 	// public keymatter, but the clear intention is that these be grouped; so first, batch up
-	// SigningKeys that share the same hash
-	keyMap := make(map[string][]*SigningKey)
+	// SigningCerts that share the same hash
+	keyMap := make(map[string][]*android.SigningCert)
 	for _, sk := range keys {
-		cfgs, ok := keyMap[sk.certHash]
+		cfgs, ok := keyMap[sk.CertHash]
 		if !ok {
-			cfgs = make([]*SigningKey, 0)
+			cfgs = make([]*android.SigningCert, 0)
 		}
-		keyMap[sk.certHash] = append(cfgs, sk)
+		keyMap[sk.CertHash] = append(cfgs, sk)
 	}
 
 	for _, sks := range keyMap {
@@ -434,12 +435,12 @@ func (v2 *V2Block) Sign(z *Zip, keys []*SigningKey) ([]byte, error) {
 			var algoID uint32
 			var hasher crypto.Hash
 			switch sk.Type {
-			case RSA:
+			case android.RSA:
 				switch sk.Hash {
-				case SHA256:
+				case android.SHA256:
 					algoID = 0x0103
 					hasher = crypto.SHA256
-				case SHA512:
+				case android.SHA512:
 					algoID = 0x0104
 					hasher = crypto.SHA512
 				default:
@@ -477,11 +478,11 @@ func (v2 *V2Block) Sign(z *Zip, keys []*SigningKey) ([]byte, error) {
 			var hasher crypto.Hash
 			var err error
 			switch sk.Type {
-			case RSA:
+			case android.RSA:
 				switch sk.Hash {
-				case SHA256:
+				case android.SHA256:
 					hasher = crypto.SHA256
-				case SHA512:
+				case android.SHA512:
 					hasher = crypto.SHA512
 				}
 			}

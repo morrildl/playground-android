@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 
+	"playground/android"
 	"playground/log"
 )
 
@@ -193,7 +194,7 @@ func (z *Zip) Verify() error {
 /* SignV1 signs the zip with the provided keys, using the Java signed-JAR signing rubric, only. This
  * was used by Android up to the Nougat release, when it was supplemented by a more secure
  * whole-file "v2" scheme. */
-func (z *Zip) SignV1(keys []*SigningKey) (*Zip, error) {
+func (z *Zip) SignV1(keys []*android.SigningCert) (*Zip, error) {
 	for _, sk := range keys {
 		if err := sk.Resolve(); err != nil {
 			return nil, err
@@ -220,7 +221,7 @@ func (z *Zip) SignV1(keys []*SigningKey) (*Zip, error) {
 
 /* SignV2 signs the zip with the provided keys, using the Android-specific whole-file "v2" signing
  * rubric, only. */
-func (z *Zip) SignV2(keys []*SigningKey) (*Zip, error) {
+func (z *Zip) SignV2(keys []*android.SigningCert) (*Zip, error) {
 	for _, sk := range keys {
 		if err := sk.Resolve(); err != nil {
 			return nil, err
@@ -241,7 +242,7 @@ func (z *Zip) SignV2(keys []*SigningKey) (*Zip, error) {
  * (Android-specific whole-file) signing rubrics. Note that `Sign()` IS NOT equivalent to
  * `SignV1(); SignV2()`. When signed with both schemes, the JAR `.SF` files have an additional
  * header, per spec. */
-func (z *Zip) Sign(keys []*SigningKey) (*Zip, error) {
+func (z *Zip) Sign(keys []*android.SigningCert) (*Zip, error) {
 	for _, sk := range keys {
 		if err := sk.Resolve(); err != nil {
 			return nil, err

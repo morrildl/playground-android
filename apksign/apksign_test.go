@@ -4,6 +4,8 @@ import (
 	"io/ioutil"
 	"os"
 	"testing"
+
+	"playground/android"
 )
 
 func loadFile(name string) ([]byte, error) {
@@ -35,12 +37,13 @@ func saveFile(name string, b []byte) error {
 
 var sdkapk, unsapk, rawzip []byte
 
-var keys []*SigningKey = []*SigningKey{
-	{
+var keys []*android.SigningCert = []*android.SigningCert{
+	{ SigningKey: android.SigningKey{
+			KeyPath:  "testdata/signing.key",
+			Type:     android.RSA,
+			Hash:     android.SHA256,
+		},
 		CertPath: "testdata/signing.crt",
-		KeyPath:  "testdata/signing.key",
-		Type:     RSA,
-		Hash:     SHA256,
 	},
 }
 
