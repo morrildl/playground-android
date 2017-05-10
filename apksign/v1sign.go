@@ -22,6 +22,8 @@ type sigPair struct {
 	pkcs7 *pkcs7.PKCS7
 }
 
+// V1Reader loads an input Zip file and can verify its Android APK v1 signatures (i.e. Java JAR file
+// signatures.)
 type V1Reader struct {
 	observed *manifest
 	provided *manifest
@@ -37,6 +39,18 @@ var (
 	sigRE        = regexp.MustCompile(`^META-INF/SIG-([a-zA-Z0-9_]+)$`)
 )
 
+// ParseZip loads the indicated bytes into a V1Reader, and parses out the JAR manifest and related
+// signature files. While doing so, it must necessarily stream through the file's contents. ParseZip
+// returns a non-nil error if the bytes fail to parse as a Zip, or if it is missing the required
+// manifest file or signing files.
+//
+// If `writer` is not nil, each file will be passed through to it while the Zip's contents are
+// being iterated. This allows the caller to construct a V1Writer from the input without having to
+// make a second pass over the Zip contents. That is, if you only want to load and verify a Zip's
+// signature, pass a nil `writer`; but if you are intending to sign the Zip, pass in a `writer`.
+//
+// Note that unlike the V2 handling code in v2sign.go in this package, this function does use the
+// standard Go zip library.
 func ParseZip(buf []byte, writer *V1Writer) (*V1Reader, error) {
 	var z *zip.Reader
 	var err error
@@ -131,6 +145,8 @@ func ParseZip(buf []byte, writer *V1Writer) (*V1Reader, error) {
 	return v1, nil
 }
 
+// Verify returns a non-nil error if the `v1` JAR/APK fails to verify under the standard JAR signing
+// scheme. It returns nil if the file's signatures all verify.
 func (v1 *V1Reader) Verify() error {
 	if v1.provided == nil || v1.observed == nil {
 		return errors.New("nil reported or observed")
@@ -165,6 +181,7 @@ func (v1 *V1Reader) Verify() error {
 	return nil
 }
 
+// V1Writer is used to construct a Zip file and sign its contents.
 type V1Writer struct {
 	manifest *manifest
 	writer   *zip.Writer
@@ -178,6 +195,8 @@ func NewV1Writer() *V1Writer {
 	return v1
 }
 
+// Add adds the specified zip.File to the new Zip being created by this `v1`. All file metadata is
+// also copied, except for CRC32 and size headers; these are recomputed.
 func (v1 *V1Writer) Add(zf *zip.File) error {
 	var fr io.ReadCloser
 	var contents []byte
@@ -224,6 +243,9 @@ func (v1 *V1Writer) Add(zf *zip.File) error {
 	return nil
 }
 
+// Sign generates the JAR manifest and assorted signature files that constitute a JAR signature.
+// That is, it generates the manifest and `.SF` files with the digests of the JAR's files, and then
+// signs the `.SF` file. All these files are then included in the Zip itself.
 func (v1 *V1Writer) Sign(keys []*android.SigningCert, signifyV2 bool) error {
 	if v1 == nil || v1.manifest == nil || v1.writer == nil {
 		return errors.New("V1Writer.Sign called uninitialized")

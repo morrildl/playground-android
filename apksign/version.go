@@ -1,5 +1,7 @@
 package apksign
 
+// SigningVersion is an enum of all supported Android APK signing scheme versions. Currently these
+// are v1 and v2.
 type SigningVersion int
 
 const (

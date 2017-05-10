@@ -1,3 +1,4 @@
+// Package otasign contains code to sign Android system images and OTA images.
 package otasign
 
 import (
@@ -15,8 +16,6 @@ import (
 	"playground/log"
 )
 
-// See https://source.android.com/security/verifiedboot/verified-boot
-
 type AlgorithmID struct {
 	Algorithm  asn1.ObjectIdentifier
 	Parameters asn1.RawValue `asn1:"optional"`
@@ -27,20 +26,31 @@ type AuthAttr struct {
 	Length int
 }
 
+// BootSigASN1 is used along with AuthAttr and AlgorithmID to marshal and unmarshal boot image
+// signature blocks to/from DER-encoded ASN.1 format via the encoding/asn1 library.
 type BootSigASN1 struct {
-	Version int
-	Cert asn1.RawValue
+	Version      int
+	Cert         asn1.RawValue
 	AlgorithmIDs AlgorithmID
-	AuthAttrs AuthAttr
-	Signature []byte
+	AuthAttrs    AuthAttr
+	Signature    []byte
 }
 
+// BootSig represents a boot signature block for an Android bootable partition image. It implements
+// the "Android Verified Boot" specification at
+// https://source.android.com/security/verifiedboot/verified-boot
+//
+// Currently only RSA signatures using SHA-2/256 or SHA-2/512 are supported.
 type BootSig struct {
 	BootSigASN1
 	target string
 	signed []byte
 }
 
+// ParseBootSig parses its input as a signature block for an Android bootable partition image.
+// Essentially it unmarshals the DER-encoded ASN.1 input, and the inspects the resulting struct tree
+// for correctness. A non-nil error indicates either a low-level asn1 parse error or a logical
+// error.
 func ParseBootSig(b []byte) (*BootSig, error) {
 	sig := BootSig{}
 
@@ -63,6 +73,7 @@ func ParseBootSig(b []byte) (*BootSig, error) {
 	return &sig, nil
 }
 
+// NewBootSig prepares a new signature tree for use in signing a partition image.
 func NewBootSig(target string, b []byte) *BootSig {
 	sig := BootSig{}
 	sig.Version = 1
@@ -74,6 +85,9 @@ func NewBootSig(target string, b []byte) *BootSig {
 	return &sig
 }
 
+// Verify validates the signature in `sig` over the input `b`. Note that `b` must be the "signable
+// bytes" representation of the bootable partition image (i.e. padded, etc.) and not necessarily the
+// raw bytes as in the image file per se.
 func (sig *BootSig) Verify(b []byte) error {
 	// if there was no cert, something is fishy
 	cert, err := x509.ParseCertificate(sig.Cert.FullBytes)
@@ -105,7 +119,7 @@ func (sig *BootSig) Verify(b []byte) error {
 	if err != nil {
 		return errors.New("error marshaling authenticated attributes to ASN.1")
 	}
-	signable := make([]byte, len(b) + len(attrs))
+	signable := make([]byte, len(b)+len(attrs))
 	copy(signable, b)
 	copy(signable[len(b):], attrs)
 
@@ -131,6 +145,8 @@ func (sig *BootSig) Verify(b []byte) error {
 	return nil
 }
 
+// Sign generates the signature from the tree structure represented by `sig`. Once Marshal()ed, the
+// resulting bytes can be appended to a boot image.
 func (sig *BootSig) Sign(target string, sc *android.SigningCert) error {
 	if err := sc.Resolve(); err != nil {
 		return err
@@ -160,7 +176,7 @@ func (sig *BootSig) Sign(target string, sc *android.SigningCert) error {
 		return err
 	}
 
-	signable := make([]byte, len(sig.signed) + len(attrs))
+	signable := make([]byte, len(sig.signed)+len(attrs))
 	copy(signable, sig.signed)
 	copy(signable[len(sig.signed):], attrs)
 
@@ -171,6 +187,7 @@ func (sig *BootSig) Sign(target string, sc *android.SigningCert) error {
 	return nil
 }
 
+// Signer returns the certificate used to sign the block represented by `sig`.
 func (sig *BootSig) Signer() *x509.Certificate {
 	cert, err := x509.ParseCertificate(sig.Cert.FullBytes)
 	if err != nil {
@@ -180,6 +197,7 @@ func (sig *BootSig) Signer() *x509.Certificate {
 	return cert
 }
 
+// Marshal returns the DER-encoded ASN.1 signature block bytes, as defined by the Android spec.
 func (sig *BootSig) Marshal() []byte {
 	b, err := asn1.Marshal(sig.BootSigASN1)
 	if err != nil {
@@ -189,12 +207,15 @@ func (sig *BootSig) Marshal() []byte {
 	return b
 }
 
+// BootImage represents a bootable Android partition image.
 type BootImage struct {
 	bootSig *BootSig
-	raw []byte
-	cooked []byte
+	raw     []byte
+	cooked  []byte
 }
 
+// NewBootImage parses the provided bytes as an Android boot image. This involves inspecting the
+// header and computing length of the raw image (i.e. the image without any existing signature).
 func NewBootImage(b []byte) (*BootImage, error) {
 	if string(b[:8]) != "ANDROID!" {
 		return nil, errors.New("image lacks Android boot image magic")
@@ -212,19 +233,23 @@ func NewBootImage(b []byte) (*BootImage, error) {
 	return &img, nil
 }
 
+// ComputeLength returns the raw size of the partition image -- that is, with any existing signatures
+// stripped. As the Android bootable image header was defined before the verified boot scheme was,
+// the header contains no offset for the signature block. Thus we must recompute the original
+// image's size from the header block, and then discard any bytes appended to it by a previous
+// signing operation.
 func (img *BootImage) ComputeLength() int {
 	/* Android boot image header format:
-		Header:
-			uint64 - "ANDROID!" (magic)
-			int32 - kernel size
-			int32 - kernel address
-			int32 - ramdisk size
-			int32 - ramdisk addr
-			int32 - second size
-			int32 - second addr
-			int32 - tags addr
-			int32 - page size
-	 */
+	uint64 - "ANDROID!" (magic)
+	int32 - kernel size
+	int32 - kernel address
+	int32 - ramdisk size
+	int32 - ramdisk addr
+	int32 - second size
+	int32 - second addr
+	int32 - tags addr
+	int32 - page size
+	*/
 
 	var b []byte
 	var kernelSize, ramdiskSize, secondSize, pageSize uint32
@@ -245,10 +270,10 @@ func (img *BootImage) ComputeLength() int {
 	// same for other size fields. The header block itself is also page aligned.  So the image file
 	// size will be greater than the sum of these sizes, and we need to compute that for signing.
 
-	imgLen := pageSize // header
-	imgLen += ((kernelSize + pageSize - 1) / pageSize) * pageSize // kernel
-	imgLen += ((ramdiskSize + pageSize - 1) / pageSize) * pageSize // ramdisk 
-	imgLen += ((secondSize + pageSize - 1) / pageSize) * pageSize // second image
+	imgLen := pageSize                                             // header
+	imgLen += ((kernelSize + pageSize - 1) / pageSize) * pageSize  // kernel
+	imgLen += ((ramdiskSize + pageSize - 1) / pageSize) * pageSize // ramdisk
+	imgLen += ((secondSize + pageSize - 1) / pageSize) * pageSize  // second image
 
 	// this will never result in a change to imgLen's value since it's already a multiple of pageSize, but hey why not
 	imgLen = ((imgLen + pageSize - 1) / pageSize) * pageSize
@@ -260,6 +285,8 @@ func (img *BootImage) ComputeLength() int {
 	return int(imgLen)
 }
 
+// Verify returns a non-nil error if `img` is not signed, or if its signature fails to verify. It
+// returns a nil error on success.
 func (img *BootImage) Verify(cert *x509.Certificate) error {
 	// parse the signature block out of img.raw if it doesn't look it has been yet
 	if img.bootSig == nil {
@@ -290,6 +317,8 @@ func (img *BootImage) Verify(cert *x509.Certificate) error {
 	return nil
 }
 
+// Sign the boot image in `img` for a particular mount point target using the provided
+// certificate.
 func (img *BootImage) Sign(target string, sc *android.SigningCert) error {
 	l := img.ComputeLength()
 	if l > len(img.raw) {
@@ -305,16 +334,14 @@ func (img *BootImage) Sign(target string, sc *android.SigningCert) error {
 	}
 	sigBytes := img.bootSig.Marshal()
 
-	img.cooked = make([]byte, len(signable) + len(sigBytes))
+	img.cooked = make([]byte, len(signable)+len(sigBytes))
 	copy(img.cooked, signable)
 	copy(img.cooked[len(signable):], sigBytes)
-
-	fmt.Println("que?")
-	fmt.Println(len(img.cooked), len(sigBytes))
 
 	return nil
 }
 
+// Marshal returns a []byte representation of `img`, including any signatures.
 func (img *BootImage) Marshal() []byte {
 	if len(img.cooked) < 1 {
 		return nil
@@ -325,6 +352,7 @@ func (img *BootImage) Marshal() []byte {
 	return ret
 }
 
+// IsSigned indicates whether `img` is signed under the Android Verified Boot scheme.
 func (img *BootImage) IsSigned() bool {
 	// check for truncated boot image -- can't possibly be signed
 	l := img.ComputeLength()
@@ -344,9 +372,7 @@ func (img *BootImage) IsSigned() bool {
 	return true
 }
 
-
-
-// TODO: promote these out of apksign
+// TODO: promote these out of apksign into a new playground/binary package?
 func pop32(in []byte) (uint32, []byte) {
 	return binary.LittleEndian.Uint32(in[:4]), in[4:]
 }

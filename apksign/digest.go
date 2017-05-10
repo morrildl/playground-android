@@ -11,20 +11,32 @@ import (
 	"playground/log"
 )
 
+// Digester is a crypto.Hash implementation that implements the Merkel-tree-flavored hash scheme
+// defined in the Android APK v2 signing scheme.
 type Digester struct {
 	Hash   crypto.Hash
 	chunks []chan []byte
 }
 
+// NewDigester returns a new instance using the provided crypto.Hash algorithm for its underlying
+// hash scheme.
 func NewDigester(h crypto.Hash) *Digester {
 	return &Digester{h, make([]chan []byte, 0)}
 }
 
+// Write starts a parallelized chunk-based hash computation of the input. Note that this differs
+// slightly from a typical crypto.Hash in that the input is, per Android spec, computed in 1k chunks
+// of its input. This means that `d.Write(a); d.Write(b)` != `d.Write(append(a, b...))` unless `a`
+// happens to be an exact multiple of 1k.
+//
+// This function starts `len(p) / 1k` goroutines.
 func (d *Digester) Write(p []byte) (n int, err error) {
 	d.chunks = append(d.chunks, parallelBufferHash(p, d.Hash.New)...)
 	return len(p), nil
 }
 
+// Sum waits winds up the parallel chunk hashes into the accumulated top-level hash, per Android
+// spec.
 func (d *Digester) Sum(b []byte) []byte {
 	numChunks := make([]byte, 4)
 	binary.LittleEndian.PutUint32(numChunks, uint32(len(d.chunks)))
@@ -44,14 +56,19 @@ func (d *Digester) Sum(b []byte) []byte {
 	return accumHash.Sum(b)
 }
 
+// Reset clears this Digester, preparing it for a new usage.
 func (d *Digester) Reset() {
 	d.chunks = make([]chan []byte, 0)
 }
 
+// Size() returns the size of the Digester, which is the same as the size of its current underlying
+// crypto.Hash.
 func (d *Digester) Size() int {
 	return d.Hash.New().Size()
 }
 
+// BlockSize() returns the block size of the Digester, which is the same as the block size of its current underlying
+// crypto.Hash.
 func (d *Digester) BlockSize() int {
 	return d.Hash.New().BlockSize()
 }

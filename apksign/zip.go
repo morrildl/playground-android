@@ -11,10 +11,13 @@ import (
 	"playground/log"
 )
 
-// This package contains a class for performing certain operations on ZIP files required for signing
-// Android APKs. It supports the "Android Signing Scheme v2" introduced in Nougat.
+// Zip loads and performs operations on ZIP files required for signing Android APKs. It supports the
+// "Android Signing Scheme v2" introduced in Nougat.
+//
 // See https://source.android.com/security/apksigning/v2.html
-
+//
+// As this signing scheme does not rely on any Android-related content in the Zip file itself, it
+// can actually be used to sign arbitrary Zip files; they need not be Android APKs.
 type Zip struct {
 	IsAPK      bool
 	IsV1Signed bool
@@ -28,6 +31,15 @@ type Zip struct {
 	rawASv2    []byte
 }
 
+// NewZip attempts to parse its input as a Zip file, determining along the way whether the input is
+// actually an Android APK, and whether it is signed with either the v1 or v2 signing schemes. A
+// non-nil error is returned if the input does not parse as a Zip. The IsAPK, IsV1Signed, and
+// IsV2Signed will be populated once this function returns a nil error; until they, their values are
+// untrustworthy.
+//
+// Note that this function does NOT use the Go standard zip library. As the Android v2 signing scheme is
+// non-standard and involves injecting a non-Zip data-block into the file before the Zip central
+// directory, this code does byte parsing of its input to locate the relevant offsets.
 func NewZip(buf []byte) (*Zip, error) {
 	z := &Zip{}
 
@@ -148,6 +160,9 @@ func NewZip(buf []byte) (*Zip, error) {
 	return nil, errors.New("input is not a zip")
 }
 
+// VerifyV1 returns a non-nil error if the represented Zip file has a v1 (i.e. Java signed JAR)
+// signature that does not verify. Note that calling this when z.IsV1Signed == false is always an
+// error. VerifyV1 returns nil if the signature validates.
 func (z *Zip) VerifyV1() error {
 	var r *V1Reader
 	var err error
@@ -163,6 +178,9 @@ func (z *Zip) VerifyV1() error {
 	return r.Verify()
 }
 
+// VerifyV2 returns a non-nil error if the represented Zip file has a v2 (i.e. Android-specific
+// whole-file) signature that does not verify. Note that calling this when z.IsV2Signed == false is
+// always an error. VerifyV2 returns nil if the signature validates.
 func (z *Zip) VerifyV2() error {
 	var v2 *V2Block
 	var err error
@@ -179,6 +197,9 @@ func (z *Zip) VerifyV2() error {
 	return v2.Verify(z)
 }
 
+// Verify returns a non-nil error if the represented Zip file has a signature (under either v1 or v2
+// rubric) that does not validate. Note that calling this when both z.IsV1Signed == false and
+// z.IsV2Signed == false is always an error. Verify returns nil if the signature(s) validate(s).
 func (z *Zip) Verify() error {
 	if z.IsV2Signed {
 		return z.VerifyV2()
@@ -191,9 +212,9 @@ func (z *Zip) Verify() error {
 	return z.VerifyV1()
 }
 
-/* SignV1 signs the zip with the provided keys, using the Java signed-JAR signing rubric, only. This
- * was used by Android up to the Nougat release, when it was supplemented by a more secure
- * whole-file "v2" scheme. */
+// SignV1 signs the zip with the provided keys, using the Java signed-JAR signing rubric, only. This
+// was used by Android up to the Nougat release, when it was supplemented by a more secure
+// whole-file "v2" scheme.
 func (z *Zip) SignV1(keys []*android.SigningCert) (*Zip, error) {
 	for _, sk := range keys {
 		if err := sk.Resolve(); err != nil {
@@ -219,8 +240,8 @@ func (z *Zip) SignV1(keys []*android.SigningCert) (*Zip, error) {
 	return NewZip(b)
 }
 
-/* SignV2 signs the zip with the provided keys, using the Android-specific whole-file "v2" signing
- * rubric, only. */
+// SignV2 signs the zip with the provided keys, using the Android-specific whole-file "v2" signing
+// rubric, only.
 func (z *Zip) SignV2(keys []*android.SigningCert) (*Zip, error) {
 	for _, sk := range keys {
 		if err := sk.Resolve(); err != nil {
@@ -238,10 +259,10 @@ func (z *Zip) SignV2(keys []*android.SigningCert) (*Zip, error) {
 	return NewZip(b)
 }
 
-/* Sign signs the zip with the provided keys, using BOTH the v1 (JAR signer) and v2
- * (Android-specific whole-file) signing rubrics. Note that `Sign()` IS NOT equivalent to
- * `SignV1(); SignV2()`. When signed with both schemes, the JAR `.SF` files have an additional
- * header, per spec. */
+// Sign signs the zip with the provided keys, using BOTH the v1 (JAR signer) and v2
+// (Android-specific whole-file) signing rubrics. Note that `Sign()` IS NOT equivalent to
+// `SignV1(); SignV2()`. When signed with both schemes, the JAR `.SF` files have an additional
+// header, per spec.
 func (z *Zip) Sign(keys []*android.SigningCert) (*Zip, error) {
 	for _, sk := range keys {
 		if err := sk.Resolve(); err != nil {
@@ -278,6 +299,15 @@ func (z *Zip) Sign(keys []*android.SigningCert) (*Zip, error) {
 	return NewZip(b)
 }
 
+// InjectBeforeCD modifies the Zip file bytes represented by this instance by injecting the input
+// bytes into the file immediately before the Zip Central Directory block. The End of Central
+// Directory block's record of the Central Directory offset is updated accordingly, so that the new
+// Zip file is valid. Note that this is the behavior specified by the Android APK signing scheme v2,
+// which is what this function is intended to be used for.
+//
+// The returned slice is backed by a new array. The bytes represented by `z` are not modified, nor
+// is any other state of `z`. If the resulting Zip bytes need to be interacted with, they must be
+// parsed into a new Zip instance.
 func (z *Zip) InjectBeforeCD(data []byte) []byte {
 	// compute how much space we'll need for the new bytes
 	newSize := int64(len(z.raw))
@@ -302,6 +332,7 @@ func (z *Zip) InjectBeforeCD(data []byte) []byte {
 	return ret
 }
 
+// Bytes returns a slice over a new copy of the bytes underlying `z`.
 func (z *Zip) Bytes() []byte {
 	ret := make([]byte, len(z.raw))
 	copy(ret, z.raw)

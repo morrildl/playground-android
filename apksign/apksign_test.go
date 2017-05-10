@@ -38,11 +38,11 @@ func saveFile(name string, b []byte) error {
 var sdkapk, unsapk, rawzip []byte
 
 var keys []*android.SigningCert = []*android.SigningCert{
-	{ SigningKey: android.SigningKey{
-			KeyPath:  "testdata/signing.key",
-			Type:     android.RSA,
-			Hash:     android.SHA256,
-		},
+	{SigningKey: android.SigningKey{
+		KeyPath: "testdata/signing.key",
+		Type:    android.RSA,
+		Hash:    android.SHA256,
+	},
 		CertPath: "testdata/signing.crt",
 	},
 }

@@ -14,6 +14,16 @@ import (
 	"playground/log"
 )
 
+/*
+ * This file contains functions for parsing and marshaling Java JAR MANIFEST.MF files, and the
+ * closely-related *.SF "signed-files" files. The JAR signature rubric is somewhat underspecified in
+ * general, and in particular the Android tools seem to assume (or at least, only use) a relatively
+ * small subset. This implementation follows suit. The functions in here work for all Android APKs
+ * we've tested, but this code is unlikely to work for the larger universe of JAR files.
+ * Accordingly, none of the functions in here are exported out of the package, because we don't want
+ * to imply they are suitable for use with arbitrary JAR files.
+ */
+
 type manifest struct {
 	headers map[string]string
 	digests map[string]map[crypto.Hash][]byte
@@ -392,6 +402,8 @@ func marshalSection(name string, attrs map[string]string) []byte {
 	return buf.Bytes()
 }
 
+// manifestSplitLine turns its input string into one or more output strings, split per the Java JAR
+// 72-character line limit and continuation specification.
 func manifestSplitLine(s string) []string {
 	lines := make([]string, 0)
 	if len(s) > 72 {
