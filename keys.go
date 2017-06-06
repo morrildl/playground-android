@@ -51,11 +51,12 @@ func (sk *SigningKey) Resolve() error {
 	}
 	switch sk.Type {
 	case RSA:
-		if block.Type != "RSA PRIVATE KEY" {
-			return errors.New("type set as RSA but PEM block is not 'RSA PRIVATE KEY'")
+		if block.Type != "RSA PRIVATE KEY" && block.Type != "PRIVATE KEY" {
+			return errors.New("type set as RSA but PEM block does not look like a 'PRIVATE KEY'")
 		}
 		key, err := x509.ParsePKCS1PrivateKey(block.Bytes) // assumes ASN1 DER representation of a PKCS1 key
 		if err != nil {
+			log.Debug("SigningKey.Resolve", "error parsing private key", err)
 			return err
 		}
 		sk.Key = key

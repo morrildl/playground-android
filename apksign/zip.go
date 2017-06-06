@@ -266,6 +266,7 @@ func (z *Zip) SignV2(keys []*android.SigningCert) (*Zip, error) {
 func (z *Zip) Sign(keys []*android.SigningCert) (*Zip, error) {
 	for _, sk := range keys {
 		if err := sk.Resolve(); err != nil {
+			log.Debug("Zip.Sign", "error resolving signing key", err)
 			return nil, err
 		}
 	}
@@ -278,21 +279,26 @@ func (z *Zip) Sign(keys []*android.SigningCert) (*Zip, error) {
 
 	w = NewV1Writer()
 	if _, err = ParseZip(z.raw, w); err != nil {
+		log.Debug("Zip.Sign", "error in parsing", err)
 		return nil, err
 	}
 
 	if err = w.Sign(keys, true); err != nil {
+		log.Debug("Zip.Sign", "error in v1 signing", err)
 		return nil, err
 	}
 	if b, err = w.Marshal(); err != nil {
+		log.Debug("Zip.Sign", "error in marshaling", err)
 		return nil, err
 	}
 	if newZ, err = NewZip(b); err != nil {
+		log.Debug("Zip.Sign", "error in reparse", err)
 		return nil, err
 	}
 
 	v2 = &V2Block{}
 	if b, err = v2.Sign(newZ, keys); err != nil {
+		log.Debug("Zip.Sign", "error in v2 signing", err)
 		return nil, err
 	}
 
