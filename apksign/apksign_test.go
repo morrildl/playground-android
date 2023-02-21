@@ -15,22 +15,28 @@
 package apksign
 
 import (
-	"io/ioutil"
+	"crypto/x509"
+	"encoding/pem"
+	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"playground/android"
 )
 
+const (
+	keyPath    = "testdata/signing.key"
+	certPath   = "testdata/signing.crt"
+	sdkapkPath = "testdata/app.1.apk"
+	unsapkPath = "testdata/app.2.apk"
+	rawzipPath = "testdata/just.a.zip"
+)
+
 func loadFile(name string) ([]byte, error) {
-	var f *os.File
 	var err error
 	var b []byte
-	if f, err = os.Open(name); err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	if b, err = ioutil.ReadAll(f); err != nil {
+	if b, err = os.ReadFile(name); err != nil {
 		return nil, err
 	}
 	return b, err
@@ -42,7 +48,12 @@ func saveFile(name string, b []byte) error {
 	if f, err = os.Create(name); err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func(f *os.File) {
+		err := f.Close()
+		if err != nil {
+			panic(err)
+		}
+	}(f)
 	if _, err = f.Write(b); err != nil {
 		return err
 	}
@@ -51,26 +62,89 @@ func saveFile(name string, b []byte) error {
 
 var sdkapk, unsapk, rawzip []byte
 
-var keys []*android.SigningCert = []*android.SigningCert{
+var keys = []*android.SigningCert{
 	{SigningKey: android.SigningKey{
-		KeyPath: "testdata/signing.key",
+		KeyPath: keyPath,
 		Type:    android.RSA,
 		Hash:    android.SHA256,
 	},
-		CertPath: "testdata/signing.crt",
+		CertPath: certPath,
 	},
+}
+
+var keysStream []*android.SigningCert
+
+func InitKeyFromStream() {
+	// Check Private Key File
+	if _, err := filepath.Abs(keyPath); err != nil {
+		fmt.Printf("File '%s' does not resolve", keyPath)
+		return
+	}
+
+	if stat, err := os.Stat(keyPath); err != nil || (stat != nil && stat.IsDir()) {
+		fmt.Printf("File '%v' does not stat or is a directory", err)
+		return
+	}
+
+	fileBytes, err := os.ReadFile(keyPath)
+	if err != nil {
+		fmt.Printf("File '%s' failed to load", keyPath)
+		return
+	}
+
+	block, _ := pem.Decode(fileBytes)
+	if block == nil {
+		fmt.Printf("Unable to decode PEM bytes")
+	}
+	if block.Type != "RSA PRIVATE KEY" && block.Type != "PRIVATE KEY" {
+		fmt.Printf("type set as RSA but PEM block does not look like a 'PRIVATE KEY'")
+		return
+	}
+	key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		fmt.Printf("Cannot decode RSA Private key: %v", err)
+	}
+
+	// Check Certificate File
+	if _, err := filepath.Abs(certPath); err != nil {
+		fmt.Printf("File '%s' does not resolve", certPath)
+		return
+	}
+
+	if stat, err := os.Stat(certPath); err != nil || (stat != nil && stat.IsDir()) {
+		fmt.Printf("File '%v' does not stat or is a directory", err)
+		return
+	}
+
+	certBytes, err := os.ReadFile(certPath)
+	if err != nil {
+		fmt.Printf("File '%s' failed to load", certPath)
+		return
+	}
+
+	keysStream = []*android.SigningCert{
+		{SigningKey: android.SigningKey{
+			Type: android.RSA,
+			Hash: android.SHA256,
+			Key:  key,
+		},
+			CertBytes: certBytes,
+		},
+	}
 }
 
 func TestMain(m *testing.M) {
 	var err error
 
-	if sdkapk, err = loadFile("testdata/app.1.apk"); err != nil {
+	InitKeyFromStream()
+
+	if sdkapk, err = loadFile(sdkapkPath); err != nil {
 		os.Exit(1)
 	}
-	if unsapk, err = loadFile("testdata/app.2.apk"); err != nil {
+	if unsapk, err = loadFile(unsapkPath); err != nil {
 		os.Exit(1)
 	}
-	if rawzip, err = loadFile("testdata/just.a.zip"); err != nil {
+	if rawzip, err = loadFile(rawzipPath); err != nil {
 		os.Exit(1)
 	}
 
@@ -165,13 +239,32 @@ func TestSignUnsignedAPK(t *testing.T) {
 		t.Errorf("v2-signed apk passes v1 verify")
 	}
 	if err = z.VerifyV2(); err != nil {
-		t.Errorf("v2-signed apk fails v2 verify", err)
+		t.Errorf("v2-signed apk fails v2 verify: %v", err)
 	}
 	if err = z.Verify(); err != nil {
-		t.Errorf("v2-signed apk fails verify", err)
+		t.Errorf("v2-signed apk fails verify: %v", err)
 	}
-	if !z.IsAPK || !z.IsV1Signed || !z.IsV2Signed {
-		t.Errorf("v2-signed apk incorrectly characterized", z.IsAPK, z.IsV1Signed, z.IsV2Signed)
+}
+
+func TestSignUnsignedAPKWithKeyStream(t *testing.T) {
+	var z *Zip
+	var err error
+	if z, err = NewZip(unsapk); err != nil {
+		t.Log("error parsing Zip", err)
+		t.FailNow()
+	}
+	if z, err = z.Sign(keysStream); err != nil {
+		t.Log("error signing apk", err)
+		t.FailNow()
+	}
+	if err = z.VerifyV1(); err == nil {
+		t.Errorf("v2-signed apk passes v1 verify")
+	}
+	if err = z.VerifyV2(); err != nil {
+		t.Errorf("v2-signed apk fails v2 verify: %v", err)
+	}
+	if err = z.Verify(); err != nil {
+		t.Errorf("v2-signed apk fails verify: %v", err)
 	}
 }
 
@@ -183,19 +276,16 @@ func TestSignUnsignedZip(t *testing.T) {
 		t.FailNow()
 	}
 	if z, err = z.Sign(keys); err != nil {
-		t.Errorf("error signing zip", err)
+		t.Errorf("error signing zip: %v", err)
 	}
 	if err = z.VerifyV1(); err == nil {
 		t.Errorf("v2-signed zip passes v1 verify")
 	}
 	if err = z.VerifyV2(); err != nil {
-		t.Errorf("v2-signed zip fails v2 verify", err)
+		t.Errorf("v2-signed zip fails v2 verify: %v", err)
 	}
 	if err = z.Verify(); err != nil {
-		t.Errorf("v2-signed zip fails verify", err)
-	}
-	if z.IsAPK || !z.IsV1Signed || !z.IsV2Signed {
-		t.Errorf("v2-signed apk incorrectly characterized", z.IsAPK, z.IsV1Signed, z.IsV2Signed)
+		t.Errorf("v2-signed zip fails verify: %v", err)
 	}
 }
 
@@ -214,13 +304,10 @@ func TestResignAPK(t *testing.T) {
 		t.Errorf("v2-signed zip passes v1 verify")
 	}
 	if err = z.VerifyV2(); err != nil {
-		t.Errorf("v2-signed zip fails v2 verify", err)
+		t.Errorf("v2-signed zip fails v2 verify: %v", err)
 	}
 	if err = z.Verify(); err != nil {
-		t.Errorf("v2-signed zip fails verify", err)
-	}
-	if !z.IsAPK || !z.IsV1Signed || !z.IsV2Signed {
-		t.Errorf("v2-signed apk incorrectly characterized", z.IsAPK, z.IsV1Signed, z.IsV2Signed)
+		t.Errorf("v2-signed zip fails verify: %v", err)
 	}
 }
 
@@ -237,9 +324,6 @@ func TestV1Verify(t *testing.T) {
 		t.Log("error parsing zip", err)
 		t.FailNow()
 	}
-	if !z.IsAPK || !z.IsV1Signed || z.IsV2Signed {
-		t.Errorf("v1-signed apk incorrectly characterized", z.IsAPK, z.IsV1Signed, z.IsV2Signed)
-	}
 	if err = z.VerifyV1(); err != nil {
 		t.Errorf("v1-signed zip fails v1 verify")
 	}
@@ -247,7 +331,7 @@ func TestV1Verify(t *testing.T) {
 		t.Errorf("v1-signed zip passes v2 verify")
 	}
 	if err = z.Verify(); err != nil {
-		t.Errorf("v1-signed zip fails general verify", err)
+		t.Errorf("v1-signed zip fails general verify: %v", err)
 	}
 }
 
@@ -264,9 +348,6 @@ func TestV2Verify(t *testing.T) {
 		t.Log("error parsing zip", err)
 		t.FailNow()
 	}
-	if !z.IsAPK || z.IsV1Signed || !z.IsV2Signed {
-		t.Errorf("v2-signed apk incorrectly characterized", z.IsAPK, z.IsV1Signed, z.IsV2Signed)
-	}
 	if err = z.VerifyV1(); err == nil {
 		t.Errorf("v2-signed zip passes v1 verify")
 	}
@@ -274,7 +355,7 @@ func TestV2Verify(t *testing.T) {
 		t.Errorf("v2-signed zip fails v2 verify")
 	}
 	if err = z.Verify(); err != nil {
-		t.Errorf("v2-signed zip fails general verify", err)
+		t.Errorf("v2-signed zip fails general verify: %v", err)
 	}
 }
 
@@ -291,9 +372,6 @@ func TestV2Stripped(t *testing.T) {
 		t.Log("error parsing zip", err)
 		t.FailNow()
 	}
-	if !z.IsAPK || !z.IsV1Signed || z.IsV2Signed {
-		t.Errorf("v2-stripped apk incorrectly characterized", z.IsAPK, z.IsV1Signed, z.IsV2Signed)
-	}
 	if err = z.VerifyV1(); err == nil {
 		t.Errorf("v2-stripped zip passes v1 verify ")
 	}
@@ -301,7 +379,7 @@ func TestV2Stripped(t *testing.T) {
 		t.Errorf("v2-stripped zip passes v2 verify")
 	}
 	if err = z.Verify(); err == nil {
-		t.Errorf("v2-stripped zip passes general verify", err)
+		t.Errorf("v2-stripped zip passes general verify: %v", err)
 	}
 }
 

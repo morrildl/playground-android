@@ -42,6 +42,7 @@ type SigningKey struct {
 // Resolve loads the private key from disk and parses it. A non-nil error is returned if the parsing
 // fails for any reason, or if the key type is unsupported.
 func (sk *SigningKey) Resolve() error {
+	var key *rsa.PrivateKey
 	if sk.Type != RSA {
 		// TODO: support EC
 		return errors.New("elliptic curve support not currently implemented")
@@ -52,6 +53,10 @@ func (sk *SigningKey) Resolve() error {
 	case SHA512:
 	default:
 		return errors.New("unsupported hash algorithm was specified")
+	}
+
+	if sk.KeyPath == "" && sk.Key != nil {
+		return nil
 	}
 
 	// parse private key
@@ -68,10 +73,16 @@ func (sk *SigningKey) Resolve() error {
 		if block.Type != "RSA PRIVATE KEY" && block.Type != "PRIVATE KEY" {
 			return errors.New("type set as RSA but PEM block does not look like a 'PRIVATE KEY'")
 		}
-		key, err := x509.ParsePKCS1PrivateKey(block.Bytes) // assumes ASN1 DER representation of a PKCS1 key
+		key, err = x509.ParsePKCS1PrivateKey(block.Bytes) // assumes ASN1 DER representation of a PKCS1 key
 		if err != nil {
-			log.Debug("SigningKey.Resolve", "error parsing private key", err)
-			return err
+			log.Debug("SigningKey.Resolve", "error parsing PKCS1 private key, retrying with PKCS8", err)
+
+			keyPKCS8, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+			if err != nil {
+				log.Debug("SigningKey.Resolve", "error parsing PKCS8 private key", err)
+				return err
+			}
+			key = keyPKCS8.(*rsa.PrivateKey)
 		}
 		sk.Key = key
 		return nil
@@ -114,6 +125,7 @@ type SigningCert struct {
 	CertPath    string
 	Certificate *x509.Certificate
 	CertHash    string
+	CertBytes   []byte
 }
 
 // Resolve parses the PEM-encoded DER/ASN.1 X.509 certificate, as well as the private key (by
@@ -126,7 +138,12 @@ func (sc *SigningCert) Resolve() error {
 	}
 
 	// parse Certificate
-	someBytes, err := safeLoad(sc.CertPath)
+	var someBytes []byte
+	if sc.CertPath != "" && sc.CertBytes == nil {
+		someBytes, err = safeLoad(sc.CertPath)
+	} else {
+		someBytes = sc.CertBytes
+	}
 	if err != nil {
 		return err
 	}

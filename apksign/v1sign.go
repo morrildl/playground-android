@@ -25,7 +25,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/fullsailor/pkcs7"
+	"go.mozilla.org/pkcs7"
 
 	"playground/android"
 	"playground/log"
@@ -288,6 +288,7 @@ func (v1 *V1Writer) Sign(keys []*android.SigningCert, signifyV2 bool) error {
 		if sd, err = pkcs7.NewSignedData(sf.raw); err != nil {
 			return err
 		}
+		sd.SetDigestAlgorithm(pkcs7.OIDDigestAlgorithmSHA256)
 
 		if err = sd.AddSigner(key.Certificate, key.Key, pkcs7.SignerInfoConfig{}); err != nil {
 			return err
